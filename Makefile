@@ -11,6 +11,9 @@
 #   make unittest -- runs the unit tests
 #   make systest -- runs the system tests
 #	make clean -- clean distutils
+#	make html -- build html docs: docs/_build/html/index.html
+#	make pdf -- build PDF: docs/_build/latex/AristaeAPIPythonLibrary.pdf
+#	make docs-clean -- clean docs/_build/
 #
 ########################################################
 # variable section
@@ -32,7 +35,7 @@ pep8:
 pyflakes:
 	pyflakes pyeapi/ test/
 
-clean:
+clean: docs-clean
 	@echo "Cleaning up distutils stuff"
 	rm -rf build
 	rm -rf dist
@@ -52,3 +55,19 @@ unittest: clean
 systest: clean
 	$(PYTHON) -m unittest discover test/system -v
 
+.PHONY: docs pdf docs-clean latexpdf
+
+html:
+	# Using -C fails due to 
+	$(MAKE) -C docs html
+	#(cd docs; $(MAKE) html)
+
+latexpdf: pdf
+
+pdf:
+	#(cd docs; $(MAKE) latexpdf)
+	$(MAKE) -C docs latexpdf
+
+docs-clean:
+	#(cd docs; $(MAKE) clean)
+	$(MAKE) -C docs clean
