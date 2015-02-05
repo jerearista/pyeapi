@@ -12,11 +12,14 @@ Contents:
    :maxdepth: 2
 
    pyeapi
+   pyeapi.api
+   license
+
+.. hold-back
+   pyeapi
    api
    eapilib
    util
-   license
-
 
 Indices and tables
 ==================
