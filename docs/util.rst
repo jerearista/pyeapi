@@ -1,5 +1,5 @@
-Pyeapi.utils
-============
+utils
+=====
 
 Contents:
 

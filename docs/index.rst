@@ -15,6 +15,7 @@ Contents:
    api
    eapilib
    util
+   license
 
 
 Indices and tables

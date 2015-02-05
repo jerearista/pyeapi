@@ -1,5 +1,5 @@
-Pyeapi.eapilib
-==============
+eapilib
+=======
 
 Contents:
 

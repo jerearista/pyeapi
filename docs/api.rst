@@ -1,5 +1,5 @@
-Pyeapi.api
-==========
+api
+===
 
 Contents:
 
