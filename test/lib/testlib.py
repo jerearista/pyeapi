@@ -34,7 +34,7 @@ import random
 import string
 import unittest
 
-from mock import Mock, PropertyMock
+from mock import Mock
 
 from pyeapi.client import Node
 
@@ -69,9 +69,15 @@ class EapiConfigUnitTest(unittest.TestCase):
         super(EapiConfigUnitTest, self).__init__(*args, **kwargs)
 
     def setUp(self):
-        self.node = Mock(spec=Node)
-        config = PropertyMock(return_value=self.config)
-        type(self.node).running_config = config
+        self.node = Node(None)
+
+        self.node._running_config = self.config
+
+        self.mock_config = Mock(name='node.config')
+        self.node.config = self.mock_config
+
+        self.mock_enable = Mock(name='node.enable')
+        self.node.enable = self.mock_enable
 
         self.assertIsNotNone(self.instance)
         self.instance.node = self.node
@@ -81,8 +87,8 @@ class EapiConfigUnitTest(unittest.TestCase):
         func = getattr(self.instance, func)
 
         if cmds is not None:
-            lcmds = len([cmds]) if isinstance(cmds, basestring) else len(cmds)
-            self.node.config.return_value = [{} for i in range(0, lcmds)]
+            lcmds = len([cmds]) if isinstance(cmds, str) else len(cmds)
+            self.mock_config.return_value = [{} for i in range(0, lcmds)]
 
         result = func(*fargs, **fkwargs)
 

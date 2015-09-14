@@ -1,7 +1,6 @@
 # Arista eAPI Python Library
 
-[![Build
-Status](https://travis-ci.org/arista-eosplus/pyeapi.svg?branch=develop)](https://travis-ci.org/arista-eosplus/pyeapi)
+[![Build Status](https://travis-ci.org/arista-eosplus/pyeapi.svg?branch=develop)](https://travis-ci.org/arista-eosplus/pyeapi) [![Coverage Status](https://coveralls.io/repos/arista-eosplus/pyeapi/badge.svg?branch=develop)](https://coveralls.io/r/arista-eosplus/pyeapi?branch=develop)
 
 The Python library for Arista's eAPI command API implementation provides a
 client API work using eAPI and communicating with EOS nodes.  The Python
@@ -23,6 +22,7 @@ through Github issues.
 * Arista EOS 4.12 or later
 * Arista eAPI enabled for at least one transport (see Official EOS Config Guide
   at arista.com for details)
+* Python 2.7 / 3.4+ (Python 3 support is work in progress)
 
 # Getting Started
 In order to use pyeapi, the EOS command API must be enabled using ``management
@@ -36,8 +36,8 @@ followed by ``/mnt/flash/eapi.conf``.  This can be overridden by setting
 
 ## Example eapi.conf File
 Below is an example of an eAPI conf file.  The conf file can contain more than
-one node.  Each node section must be prefaced by **connection:<name>** where
-<name> is the name of the connection.
+one node.  Each node section must be prefaced by **connection:\<name\>** where
+\<name\> is the name of the connection.
 
 The following configuration options are available for defining node entries:
 
@@ -49,9 +49,9 @@ The following configuration options are available for defining node entries:
   http or https connections)
 * **enablepwd** - The enable mode password if required by the destination node
 * **transport** - Configures the type of transport connection to use.  The
-  default value is _http_.  Valid values are:
-    * socket
-    * http_local
+  default value is _https_.  Valid values are:
+    * socket (available in EOS 4.14.5 or later)
+    * http_local (available in EOS 4.14.5 or later)
     * http
     * https  
 * **port** - Configures the port to use for the eAPI connection.  A default
@@ -60,9 +60,13 @@ using the following values:
     * transport: http, default port: 80
     * transport: https, deafult port: 443
     * transport: https_local, default port: 8080
-    * trasnport: socket, default port: n/a
+    * transport: socket, default port: n/a
 
-All configuration values are optional.
+
+_Note:_ See the EOS User Manual found at arista.com for more details on
+configuring eAPI values.
+
+All configuration values are optional. 
 
 ```
 [connection:veos01]
@@ -205,10 +209,36 @@ update the ``dut.conf`` file found in test/fixtures.
 # Contributing
 
 Contributing pull requests are gladly welcomed for this repository.  Please
-note that all contributes that modify the library behavior require
+note that all contributions that modify the library behavior require
 corresponding test cases otherwise the pull request will be rejected.  
 
 # License
 
-New BSD, See [LICENSE](LICENSE) file
+Copyright (c) 2014, Arista Networks EOS+
+All rights reserved.
+
+Redistribution and use in source and binary forms, with or without
+modification, are permitted provided that the following conditions are met:
+
+* Redistributions of source code must retain the above copyright notice, this
+  list of conditions and the following disclaimer.
+
+* Redistributions in binary form must reproduce the above copyright notice,
+  this list of conditions and the following disclaimer in the documentation
+  and/or other materials provided with the distribution.
+
+* Neither the name of the Arista nor the names of its
+  contributors may be used to endorse or promote products derived from
+  this software without specific prior written permission.
+
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
+FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
+OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 

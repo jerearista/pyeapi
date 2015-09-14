@@ -40,13 +40,10 @@ provide parent class for API implementations.  All API modules will
 ultimately derive from BaseEntity which provides some common functions to
 make building API modules easier.
 """
-import re
-
 from collections import Callable, Mapping
 
 from pyeapi.eapilib import CommandError, ConnectionError
-
-BLOCK_END_RE = re.compile(r'^[^\s]')
+from pyeapi.utils import make_iterable
 
 
 class BaseEntity(object):
@@ -91,19 +88,11 @@ class BaseEntity(object):
             return None.
 
         """
-        match = re.search(r'^%s$' % parent, self.config, re.M)
-        if not match:
+        try:
+            parent = r'^%s$' % parent
+            return self.node.section(parent)
+        except TypeError:
             return None
-        block_start, line_end = match.regs[0]
-
-        match = re.search(r'^[^\s]', self.config[line_end:], re.M)
-        if not match:
-            return None
-        _, block_end = match.regs[0]
-
-        block_end = line_end + block_end
-
-        return self.config[block_start:block_end]
 
     def configure(self, commands):
         """Sends the commands list to the node in config mode
@@ -130,6 +119,43 @@ class BaseEntity(object):
             return True
         except (CommandError, ConnectionError):
             return False
+
+    def command_builder(self, string, value=None, default=None):
+        """Builds a command with keywords
+
+        Args:
+            string (str): The command string
+            value: The configuration setting to subsititue into the command
+                string.  If value is a boolean and True, just the command
+                string is used
+            default (bool): Specifies the command should use the default
+                keyword argument
+
+        Returns:
+            A command string that can be used to configure the node
+        """
+        if default:
+            return 'default %s' % string
+        elif value is True:
+            return string
+        elif value:
+            return '%s %s' % (string, value)
+        else:
+            return 'no %s' % string
+
+    def configure_interface(self, name, commands):
+        """Configures the specified interface with the commands
+
+        Args:
+            name (str): The interface name to configure
+            commands: The commands to configure in the interface
+
+        Returns:
+            True if the commands completed successfully
+        """
+        commands = make_iterable(commands)
+        commands.insert(0, 'interface %s' % name)
+        return self.configure(commands)
 
 
 class Entity(BaseEntity, Callable):

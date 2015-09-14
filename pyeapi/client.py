@@ -39,7 +39,7 @@ provides a library for building API enabled data models for configuring
 EOS nodes.
 
 This library allows for creating connections to EOS eAPI enabled nodes using
-the connect or connect_for function.  Both functions will return an instance
+the connect or connect_to function.  Both functions will return an instance
 of a Node object that can be used to send and receive eAPI commands.  The
 Node object can autoload API modules for a structured object oriented
 approach to configuring the EOS node with native Python objects.
@@ -91,14 +91,24 @@ contains the settings for nodes used by the connect_to function.
 
 """
 import os
+import logging
+import re
 
-from ConfigParser import SafeConfigParser
+try:
+    # Try Python 3.x import first
+    # Note: SafeConfigParser is deprecated and replaced by ConfigParser
+    from configparser import ConfigParser as SafeConfigParser
+except ImportError:
+    # Use Python 2.7 import as a fallback
+    from ConfigParser import SafeConfigParser
 
 from pyeapi.utils import load_module, make_iterable
 
 from pyeapi.eapilib import HttpEapiConnection, HttpsEapiConnection
 from pyeapi.eapilib import SocketEapiConnection, HttpLocalEapiConnection
 from pyeapi.eapilib import CommandError
+
+LOGGER = logging.getLogger(__name__)
 
 CONFIG_SEARCH_PATH = ['~/.eapi.conf', '/mnt/flash/eapi.conf']
 
@@ -109,7 +119,7 @@ TRANSPORTS = {
     'https': HttpsEapiConnection
 }
 
-DEFAULT_TRANSPORT = 'http'
+DEFAULT_TRANSPORT = 'https'
 
 
 class Config(SafeConfigParser):
@@ -131,7 +141,17 @@ class Config(SafeConfigParser):
         SafeConfigParser.__init__(self)
 
         self.filename = filename
+        self.tags = dict()
+
         self.autoload()
+
+    @property
+    def connections(self):
+        """
+        Returns all of the loaded connections names as a list
+        """
+        conn = lambda x: str(x).replace('connection:', '')
+        return [conn(name) for name in self.sections()]
 
     def autoload(self):
         """ Loads the eapi.conf file
@@ -159,6 +179,8 @@ class Config(SafeConfigParser):
                 self.filename = filename
                 return self.read(filename)
 
+        self._add_default_connection()
+
     def read(self, filename):
         """Reads the file specified by filename
 
@@ -170,8 +192,36 @@ class Config(SafeConfigParser):
             filename (str): The full path to the file to load
         """
         SafeConfigParser.read(self, filename)
+
+        self._add_default_connection()
+
+        for name in self.sections():
+            if name.startswith('connection:') and \
+               'host' not in dict(self.items(name)):
+
+                self.set(name, 'host', name.split(':')[1])
+        self.generate_tags()
+
+    def _add_default_connection(self):
+        """Checks the loaded config and adds the localhost profile if needed
+
+        This method wil load the connection:localhost profile into the client
+        configuration if it is not already present.
+        """
         if not self.get_connection('localhost'):
             self.add_connection('localhost', transport='socket')
+
+    def generate_tags(self):
+        """ Generates the tags with collection with hosts
+        """
+        self.tags = dict()
+        for section in self.sections():
+            if self.has_option(section, 'tags'):
+                tags = self.get(section, 'tags')
+                for tag in [str(t).strip() for t in tags.split(',')]:
+                    if tag not in self.tags:
+                        self.tags[tag] = list()
+                    self.tags[tag].append(section.split(':')[1])
 
     def load(self, filename):
         """Loads the file specified by filename
@@ -248,9 +298,12 @@ class Config(SafeConfigParser):
         """
         name = 'connection:{}'.format(name)
         self.add_section(name)
-        for key, value in kwargs.iteritems():
+        for key, value in list(kwargs.items()):
             self.set(name, key, value)
+        self.generate_tags()
 
+# TODO: This is a global variable (in the module) - to review the impact on
+# having a shared state for the config file.
 config = Config()
 
 def load_config(filename):
@@ -281,6 +334,22 @@ def config_for(name):
             nodes configuration settings from the config instance
     """
     return config.get_connection(name)
+
+def hosts_for_tag(tag):
+    """ Returns the hosts assocated with the specified tag
+
+    This function will return the hosts assoicated with the tag specified
+    in the argument.  It will return an array of connecition names.
+
+    Args:
+        tag (str): The name of the tag to retrieve the list of hosts for
+
+    Returns:
+        list: A Python list object that includes the list of hosts assoicated
+            with the specified tag.
+        None: If the specified tag does not exist, then None is returned.
+    """
+    return config.tags.get(tag)
 
 def make_connection(transport, **kwargs):
     """ Creates a connection instance based on the transport
@@ -374,7 +443,10 @@ class Node(object):
         self.settings = kwargs
 
     def __str__(self):
-        return 'Node(connetion=%s)' % str(self._connection)
+        return 'Node(connection=%s)' % str(self._connection)
+
+    def __repr__(self):
+        return 'Node(connection=%s)' % repr(self._connection)
 
     @property
     def connection(self):
@@ -429,6 +501,7 @@ class Node(object):
                 response from any commands it prepends.
         """
         commands = make_iterable(commands)
+        commands = list(commands)
 
         # push the configure command onto the command stack
         commands.insert(0, 'configure')
@@ -441,6 +514,33 @@ class Node(object):
         response.pop(0)
 
         return response
+
+    def section(self, regex, config='running_config'):
+        """Returns a section of the config
+
+        Args:
+            regex (str): A valid regular expression used to select sections
+                of configuration to return
+            config (str): The configuration to return.  Valid values for config
+                are "running_config" or "startup_config".  The default value
+                is "running_config"
+
+        Returns:
+            The configuration section as a string object.
+        """
+        config = getattr(self, config)
+        match = re.search(regex, config, re.M)
+        if not match:
+            raise TypeError('config section not found')
+        block_start, line_end = match.regs[0]
+
+        match = re.search(r'^[^\s]', config[line_end:], re.M)
+        if not match:
+            raise TypeError('could not find end block')
+        _, block_end = match.regs[0]
+
+        block_end = line_end + block_end
+        return config[block_start:block_end]
 
     def enable(self, commands, encoding='json', strict=False):
         """Sends the array of commands to the node in enable mode
@@ -628,8 +728,16 @@ def connect_to(name):
         This function will return an instance of Node with the settings
             from the config instance.
 
+    Raises:
+        AttributeError: raised if the specified configuration name is not
+            found in the loaded configuration
+
     """
     kwargs = config_for(name)
+
+    if not kwargs:
+        raise AttributeError('connection profile not found in config')
+
     connection = connect(transport=kwargs.get('transport'),
                          host=kwargs.get('host'),
                          username=kwargs.get('username'),

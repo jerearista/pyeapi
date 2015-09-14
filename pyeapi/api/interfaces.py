@@ -62,15 +62,7 @@ import re
 from pyeapi.api import EntityCollection
 from pyeapi.utils import ProxyCall
 
-DESCRIPTION_RE = re.compile(r'(?<=\s{3}description\s)(?P<value>.+)$', re.M)
-SHUTDOWN_RE = re.compile(r'\s{3}(no\sshutdown)$', re.M)
-SFLOW_RE = re.compile(r'(\s{3}no sflow)', re.M)
-FLOWC_TX_RE = re.compile(r'(?<=\s{3}flowcontrol\ssend\s)(?P<value>.+)$', re.M)
-FLOWC_RX_RE = re.compile(r'(?<=\s{3}flowcontrol\sreceive\s)(?P<value>.+)$',
-                         re.M)
 MIN_LINKS_RE = re.compile(r'(?<=\s{3}min-links\s)(?P<value>.+)$', re.M)
-
-INSTANCE_METHODS = ['create', 'delete', 'default']
 
 DEFAULT_LACP_MODE = 'on'
 
@@ -120,8 +112,7 @@ class Interfaces(EntityCollection):
         return response
 
     def __getattr__(self, name):
-        if name.startswith('set_') or name in INSTANCE_METHODS:
-            return ProxyCall(self.marshall, name)
+        return ProxyCall(self.marshall, name)
 
     def get_instance(self, interface):
         cls = INTERFACE_CLASS_MAP.get(interface[0:2]) or BaseInterface
@@ -138,24 +129,81 @@ class Interfaces(EntityCollection):
             raise ValueError('invalid interface {}'.format(interface))
 
         instance = self.get_instance(interface)
+        if not hasattr(instance, name):
+            raise AttributeError("'%s' object has no attribute '%s'" %
+                                 (instance, name))
         method = getattr(instance, name)
         return method(*args, **kwargs)
 
 class BaseInterface(EntityCollection):
 
-    def get(self, name):
-        config = self.get_block('^interface %s' % name)
+    def __str__(self):
+        return 'Interface'
 
+    def get(self, name):
+        """Returns a generic interface as a set of key/value pairs
+
+        This class is should normally serve as a  base class for building more
+        specific interface resources.  The attributes of this resource are
+        common to all interfaces regardless of type in EOS.
+
+        The generic interface resource returns the following:
+
+            * name (str): The name of the interface
+            * type (str): Always returns 'generic'
+            * shutdown (bool): True if the interface is shutdown
+            * description (str): The interface description value
+
+        Args:
+            name (str): The interface identifier to retrieve from the
+                running-configuration
+
+        Returns:
+            A Python dictionary object of key/value pairs that represents
+                the interface configuration.  If the specified interface
+                does not exist, then None is returned
+        """
+        config = self.get_block('^interface %s' % name)
         if not config:
             return None
 
-        response = dict(name=name, type='generic')
-        response['shutdown'] = SHUTDOWN_RE.search(config) is None
-        response['description'] = self.value(DESCRIPTION_RE.search(config), '')
-        return response
+        resource = dict(name=name, type='generic')
+        resource.update(self._parse_shutdown(config))
+        resource.update(self._parse_description(config))
+        return resource
 
-    def value(self, match, default=None):
-        return match.group('value') if match else default
+
+    def _parse_shutdown(self, config):
+        """Scans the specified config block and returns the shutdown value
+
+        Args:
+            config (str): The interface config block to scan
+
+        Returns:
+            dict: Returns a dict object with the shutdown value retrieved
+                from the config block.  The returned dict object is intended
+                to be merged into the interface resource dict
+        """
+        value = 'no shutdown' not in config
+        return dict(shutdown=value)
+
+    def _parse_description(self, config):
+        """Scans the specified config block and returns the description value
+
+        Args:
+            config (str): The interface config block to scan
+
+        Returns:
+            dict: Returns a dict object with the description value retrieved
+                from the config block.  If the description value is not
+                configured, None is returned as the value.  The returned dict
+                is intended to be merged into the interface resource dict.
+        """
+        value = None
+        match = re.search(r'description (.+)$', config, re.M)
+        if match:
+            value = match.group(1)
+        return dict(description=value)
 
     def create(self, name):
         """Creates a new interface on the node
@@ -205,25 +253,21 @@ class BaseInterface(EntityCollection):
     def set_description(self, name, value=None, default=False):
         """Configures the interface description
 
+        EosVersion:
+            4.13.7M
+
         Args:
             name (string): The interface identifier.  It must be a full
                 interface name (ie Ethernet, not Et)
-
             value (string): The value to set the description to.
-
             default (boolean): Specifies to default the interface description
 
         Returns:
-            True if the operation succeeds otherwise False is returned
+            True if the operation succeeds otherwise False
         """
-        commands = ['interface %s' % name]
-        if default:
-            commands.append('default description')
-        elif value is not None:
-            commands.append('description %s' % value)
-        else:
-            commands.append('no description')
-        return self.configure(commands)
+        string = 'description'
+        commands = self.command_builder(string, value=value, default=default)
+        return self.configure_interface(name, commands)
 
     def set_shutdown(self, name, value=None, default=False):
         """Configures the interface shutdown state
@@ -254,6 +298,9 @@ class BaseInterface(EntityCollection):
 
 class EthernetInterface(BaseInterface):
 
+    def __str__(self):
+        return 'EthernetInterface'
+
     def get(self, name):
         """Returns an interface as a set of key/value pairs
 
@@ -280,18 +327,62 @@ class EthernetInterface(BaseInterface):
         if not config:
             return None
 
-        response = super(EthernetInterface, self).get(name)
-        response.update(dict(name=name, type='ethernet'))
+        resource = super(EthernetInterface, self).get(name)
+        resource.update(dict(name=name, type='ethernet'))
+        resource.update(self._parse_sflow(config))
+        resource.update(self._parse_flowcontrol_send(config))
+        resource.update(self._parse_flowcontrol_receive(config))
+        return resource
 
-        response['sflow'] = SFLOW_RE.search(config) is None
 
-        flowc_tx = FLOWC_TX_RE.search(config)
-        response['flowcontrol_send'] = self.value(flowc_tx, 'off')
+    def _parse_sflow(self, config):
+        """Scans the specified config block and returns the sflow value
 
-        flowc_rx = FLOWC_RX_RE.search(config)
-        response['flowcontrol_receive'] = self.value(flowc_rx, 'off')
+        Args:
+            config (str): The interface config block to scan
 
-        return response
+        Returns:
+            dict: Returns a dict object with the sflow value retrieved
+                from the config block.  The returned dict object is intended
+                to be merged into the interface resource dict
+        """
+        value = 'no sflow' not in config
+        return dict(sflow=value)
+
+    def _parse_flowcontrol_send(self, config):
+        """Scans the config block and returns the flowcontrol send value
+
+        Args:
+            config (str): The interface config block to scan
+
+        Returns:
+            dict: Returns a dict object with the flowcontrol send value
+                retrieved from the config block.  The returned dict object
+                is intended to be merged into the interface resource dict
+        """
+        value = 'off'
+        match = re.search(r'flowcontrol send (\w+)$', config, re.M)
+        if match:
+            value = match.group(1)
+        return dict(flowcontrol_send=value)
+
+    def _parse_flowcontrol_receive(self, config):
+        """Scans the config block and returns the flowcontrol receive value
+
+        Args:
+            config (str): The interface config block to scan
+
+        Returns:
+            dict: Returns a dict object with the flowcontrol receive value
+                retrieved from the config block.  The returned dict object
+                is intended to be merged into the interface resource dict
+        """
+        value = 'off'
+        match = re.search(r'flowcontrol receive (\w+)$', config, re.M)
+        if match:
+            value = match.group(1)
+        return dict(flowcontrol_receive=value)
+
 
     def create(self, name):
         """Creating Ethernet interfaces is currently not supported
@@ -415,6 +506,9 @@ class EthernetInterface(BaseInterface):
 
 class PortchannelInterface(BaseInterface):
 
+    def __str__(self):
+        return 'PortchannelInterface'
+
     def get(self, name):
         """Returns a Port-Channel interface as a set of key/value pairs
 
@@ -445,8 +539,16 @@ class PortchannelInterface(BaseInterface):
 
         response['members'] = self.get_members(name)
         response['lacp_mode'] = self.get_lacp_mode(name)
-        response['minimum_links'] = self.value(MIN_LINKS_RE.search(config), 0)
+        response.update(self._parse_minimum_links(config))
         return response
+
+    def _parse_minimum_links(self, config):
+        value = 0
+        match = re.search(r'port-channel min-links (\d+)', config)
+        if match:
+            value = int(match.group(1))
+        return dict(minimum_links=value)
+
 
     def get_lacp_mode(self, name):
         """Returns the LACP mode for the specified Port-Channel interface
@@ -485,7 +587,8 @@ class PortchannelInterface(BaseInterface):
         grpid = re.search(r'(\d+)', name).group()
         command = 'show port-channel %s all-ports' % grpid
         config = self.node.enable(command, 'text')
-        return re.findall(r'Ethernet[\d/]*', config[0]['result']['output'])
+        return re.findall(r'\b(?!Peer)Ethernet[\d/]*\b',
+                          config[0]['result']['output'])
 
     def set_members(self, name, members):
         """Configures the array of member interfaces for the Port-Channel
@@ -560,14 +663,6 @@ class PortchannelInterface(BaseInterface):
         Returns:
             True if the operation succeeds otherwise False is returned
         """
-        if value is not None:
-            try:
-                value = int(value)
-                if not 0 <= value <= 16:
-                    return False
-            except ValueError:
-                return False
-
         commands = ['interface %s' % name]
         if default:
             commands.append('default port-channel min-links')
@@ -580,22 +675,24 @@ class PortchannelInterface(BaseInterface):
 
 class VxlanInterface(BaseInterface):
 
-    SRC_INTF_RE = re.compile(r'(?<=\s{3}vxlan\ssource-interface\s)'
-                             r'(?P<value>.+)$', re.M)
-    MCAST_GRP_RE = re.compile(r'(?<=\s{3}vxlan\smulticast-group\s)'
-                              r'(?P<value>.+)$', re.M)
+    DEFAULT_SRC_INTF = ''
+    DEFAULT_MCAST_GRP = ''
 
+    def __str__(self):
+        return 'VxlanInterface'
 
-    def get(self, name='Vxlan1'):
+    def get(self, name):
         """Returns a Vxlan interface as a set of key/value pairs
 
-        Example:
-            {
-                "name": <string>,
-                "type": "vxlan",
-                "source_interface": <string>,
-                "multicast_group": <string>
-            }
+        The Vxlan interface resource returns the following:
+
+            * name (str): The name of the interface
+            * type (str): Always returns 'vxlan'
+            * source_interface (str): The vxlan source-interface value
+            * multicast_group (str): The vxlan multicast-group value
+            * udp_port (int): The vxlan udp-port value
+            * vlans (dict): The vlan to vni mappings
+            * flood_list (list): The list of global VTEP flood list
 
         Args:
             name (str): The interface identifier to retrieve from the
@@ -613,16 +710,71 @@ class VxlanInterface(BaseInterface):
         response = super(VxlanInterface, self).get(name)
         response.update(dict(name=name, type='vxlan'))
 
-        srcintf = self.value(self.SRC_INTF_RE.search(config), '')
-        response['source_interface'] = srcintf
-
-        mcastgrp = self.value(self.MCAST_GRP_RE.search(config), '')
-        response['multicast_group'] = mcastgrp
+        response.update(self._parse_source_interface(config))
+        response.update(self._parse_multicast_group(config))
+        response.update(self._parse_udp_port(config))
+        response.update(self._parse_vlans(config))
+        response.update(self._parse_flood_list(config))
 
         return response
 
-    def set_source_interface(self, name='Vxlan1', value=None, default=False):
+    def _parse_source_interface(self, config):
+        """ Parses the conf block and returns the vxlan source-interface value
+
+        Parses the provided configuration block and returns the value of
+        vxlan source-interface.  If the value is not configured, this method
+        will return DEFAULT_SRC_INTF instead.
+
+        Args:
+            config (str): The Vxlan config block to scan
+
+        Return:
+            dict: A dict object intended to be merged into the resource dict
+        """
+        match = re.search(r'vxlan source-interface ([^\s]+)', config)
+        value = match.group(1) if match else self.DEFAULT_SRC_INTF
+        return dict(source_interface=value)
+
+    def _parse_multicast_group(self, config):
+        match = re.search(r'vxlan multicast-group ([^\s]+)', config)
+        value = match.group(1) if match else self.DEFAULT_MCAST_GRP
+        return dict(multicast_group=value)
+
+    def _parse_udp_port(self, config):
+        match = re.search(r'vxlan udp-port (\d+)', config)
+        value = int(match.group(1))
+        return dict(udp_port=value)
+
+    def _parse_vlans(self, config):
+        vlans = frozenset(re.findall(r'vxlan vlan (\d+)', config))
+        values = dict()
+
+        for vid in vlans:
+            values[vid] = dict()
+
+            regexp = r'vxlan vlan {} vni (\d+)'.format(vid)
+            match = re.search(regexp, config)
+            values[vid]['vni'] = match.group(1) if match else None
+
+            regexp = r'vxlan vlan {} flood vtep (.*)$'.format(vid)
+            matches = re.search(regexp, config, re.M)
+            flood_list = matches.group(1).split(' ') if matches else []
+            values[vid]['flood_list'] = flood_list
+
+        return dict(vlans=values)
+
+    def _parse_flood_list(self, config):
+        match = re.search(r'vxlan flood vtep (.+)$', config, re.M)
+        values = list()
+        if match:
+            values = match.group(1).split(' ')
+        return dict(flood_list=values)
+
+    def set_source_interface(self, name, value=None, default=False):
         """Configures the Vxlan source-interface value
+
+        EosVersion:
+            4.13.7M
 
         Args:
             name(str): The interface identifier to configure, defaults to
@@ -633,18 +785,15 @@ class VxlanInterface(BaseInterface):
         Returns:
             True if the operation succeeds otherwise False
         """
-        commands = ['interface %s' % name]
-        if default:
-            commands.append('default vxlan source-interface')
-        elif value is not None:
-            commands.append('vxlan source-interface %s' % value)
-        else:
-            commands.append('no vxlan source-interface')
+        string = 'vxlan source-interface'
+        cmds = self.command_builder(string, value=value, default=default)
+        return self.configure_interface(name, cmds)
 
-        return self.configure(commands)
-
-    def set_multicast_group(self, name='Vxlan1', value=None, default=False):
+    def set_multicast_group(self, name, value=None, default=False):
         """Configures the Vxlan multicast-group value
+
+        EosVersion:
+            4.13.7M
 
         Args:
             name(str): The interface identifier to configure, defaults to
@@ -655,15 +804,104 @@ class VxlanInterface(BaseInterface):
         Returns:
             True if the operation succeeds otherwise False
         """
-        commands = ['interface %s' % name]
-        if default:
-            commands.append('default vxlan multicast-group')
-        elif value is not None:
-            commands.append('vxlan multicast-group %s' % value)
-        else:
-            commands.append('no vxlan multicast-group')
+        string = 'vxlan multicast-group'
+        cmds = self.command_builder(string, value=value, default=default)
+        return self.configure_interface(name, cmds)
 
-        return self.configure(commands)
+    def set_udp_port(self, name, value=None, default=False):
+        """Configures vxlan udp-port value
+
+        EosVersion:
+            4.13.7M
+
+        Args:
+            name(str): The name of the interface to configure
+            value(str): The value to set udp-port to
+            default(bool): Configure using the default keyword
+
+        Returns:
+            True if the operation succeeds otherwise False
+        """
+        string = 'vxlan udp-port'
+        cmds = self.command_builder(string, value=value, default=default)
+        return self.configure_interface(name, cmds)
+
+    def add_vtep(self, name, vtep, vlan=None):
+        """Adds a new VTEP endpoint to the global or local flood list
+
+        EosVersion:
+            4.13.7M
+
+        Args:
+            name (str): The name of the interface to configure
+            vtep (str): The IP address of the remote VTEP endpoint to add
+            vlan (str): The VLAN ID associated with this VTEP.  If the VLAN
+            keyword is used, then the VTEP is configured as a local flood
+            endpoing
+
+        Returns:
+            True if the command completes successfully
+        """
+        if not vlan:
+            cmd = 'vxlan flood vtep add {}'.format(vtep)
+        else:
+            cmd = 'vxlan vlan {} flood vtep add {}'.format(vlan, vtep)
+        return self.configure_interface(name, cmd)
+
+    def remove_vtep(self, name, vtep, vlan=None):
+        """Removes a VTEP endpoint from the global or local flood list
+
+        EosVersion:
+            4.13.7M
+
+        Args:
+            name (str): The name of the interface to configure
+            vtep (str): The IP address of the remote VTEP endpoint to add
+            vlan (str): The VLAN ID associated with this VTEP.  If the VLAN
+            keyword is used, then the VTEP is configured as a local flood
+            endpoing
+
+        Returns:
+            True if the command completes successfully
+        """
+        if not vlan:
+            cmd = 'vxlan flood vtep remove {}'.format(vtep)
+        else:
+            cmd = 'vxlan vlan {} flood vtep remove {}'.format(vlan, vtep)
+        return self.configure_interface(name, cmd)
+
+    def update_vlan(self, name, vid, vni):
+        """Adds a new vlan to vni mapping for the interface
+
+        EosVersion:
+            4.13.7M
+
+        Args:
+            vlan (str, int): The vlan id to map to the vni
+            vni (str, int): The vni value to use
+
+        Returns:
+            True if the command completes successfully
+
+        """
+        cmd = 'vxlan vlan %s vni %s' % (vid, vni)
+        return self.configure_interface(name, cmd)
+
+    def remove_vlan(self, name, vid):
+        """Removes a vlan to vni mapping for the interface
+
+        EosVersion:
+            4.13.7M
+
+        Args:
+            vlan (str, int): The vlan id to map to the vni
+
+        Returns:
+            True if the command completes successfully
+
+        """
+        return self.configure_interface(name, 'no vxlan vlan %s vni' % vid)
+
 
 
 
@@ -680,7 +918,3 @@ INTERFACE_CLASS_MAP = {
 
 def instance(api):
     return Interfaces(api)
-
-
-
-

@@ -52,10 +52,15 @@ class DutSystemTest(unittest.TestCase):
                 name = name.split(':')[1]
                 self.duts.append(pyeapi.client.connect_to(name))
 
+    def sort_dict_by_keys(self, d):
+        keys = sorted(d.keys())
+        return dict([(k, d[k]) for k in keys])
+
+
 def random_interface(dut, exclude=None):
     exclude = [] if exclude is None else exclude
     interfaces = dut.api('interfaces')
-    names = [name for name in interfaces.keys() if name.startswith('Et')]
+    names = [name for name in list(interfaces.keys()) if name.startswith('Et')]
 
     exclude_interfaces = dut.settings.get('exclude_interfaces', [])
     if exclude_interfaces:

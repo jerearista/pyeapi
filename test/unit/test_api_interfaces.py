@@ -97,7 +97,7 @@ class TestApiBaseInterface(EapiConfigUnitTest):
     def test_get(self):
         result = self.instance.get('Loopback0')
         values = dict(name='Loopback0', type='generic',
-                      shutdown=False, description='')
+                      shutdown=False, description=None)
         self.assertEqual(result, values)
 
     def test_set_description_with_value(self):
@@ -161,7 +161,7 @@ class TestApiEthernetInterface(EapiConfigUnitTest):
     def test_get(self):
         result = self.instance.get('Ethernet1')
         values = dict(name='Ethernet1', type='ethernet',
-                      description='', shutdown=False,
+                      description=None, shutdown=False,
                       sflow=True, flowcontrol_send='off',
                       flowcontrol_receive='off')
         self.assertEqual(values, result)
@@ -260,11 +260,12 @@ class TestApiPortchannelInterface(EapiConfigUnitTest):
         super(TestApiPortchannelInterface, self).setUp()
         response = open(get_fixture('show_portchannel.json'))
         self.node.enable.return_value = json.load(response)
+        response.close()
 
     def test_get(self):
         result = self.instance.get('Port-Channel1')
         values = dict(name='Port-Channel1', type='portchannel',
-                      description='', shutdown=False,
+                      description=None, shutdown=False,
                       lacp_mode='on', minimum_links=0,
                       members=['Ethernet5', 'Ethernet6'])
 
@@ -327,13 +328,10 @@ class TestApiVxlanInterface(EapiConfigUnitTest):
         self.config = open(get_fixture('running_config.vxlan')).read()
 
     def test_get(self):
-        result = self.instance.get()
-        values = dict(name='Vxlan1', type='vxlan',
-                      description='', shutdown=False,
-                      source_interface='Loopback0',
-                      multicast_group='239.10.10.10')
-
-        self.assertEqual(values, result)
+        keys = ['name', 'type', 'description', 'shutdown', 'source_interface',
+                'multicast_group', 'udp_port', 'vlans', 'flood_list']
+        result = self.instance.get('Vxlan1')
+        self.assertEqual(sorted(keys), sorted(result.keys()))
 
     def test_set_source_interface_with_value(self):
         cmds = ['interface Vxlan1', 'vxlan source-interface Loopback0']
@@ -363,6 +361,51 @@ class TestApiVxlanInterface(EapiConfigUnitTest):
     def test_set_multicast_group_with_default(self):
         cmds = ['interface Vxlan1', 'default vxlan multicast-group']
         func = function('set_multicast_group', 'Vxlan1', default=True)
+        self.eapi_positive_config_test(func, cmds)
+
+    def test_set_udp_port_with_value(self):
+        cmds = ['interface Vxlan1', 'vxlan udp-port 1024']
+        func = function('set_udp_port', 'Vxlan1', '1024')
+        self.eapi_positive_config_test(func, cmds)
+
+    def test_set_udp_port_with_no_value(self):
+        cmds = ['interface Vxlan1', 'no vxlan udp-port']
+        func = function('set_udp_port', 'Vxlan1')
+        self.eapi_positive_config_test(func, cmds)
+
+    def test_set_udp_port_with_default(self):
+        cmds = ['interface Vxlan1', 'default vxlan udp-port']
+        func = function('set_udp_port', 'Vxlan1', default=True)
+        self.eapi_positive_config_test(func, cmds)
+
+    def test_update_vlan(self):
+        cmds = ['interface Vxlan1', 'vxlan vlan 10 vni 10']
+        func = function('update_vlan', 'Vxlan1', 10, 10)
+        self.eapi_positive_config_test(func, cmds)
+
+    def test_remove_vlan(self):
+        cmds = ['interface Vxlan1', 'no vxlan vlan 10 vni']
+        func = function('remove_vlan', 'Vxlan1', 10)
+        self.eapi_positive_config_test(func, cmds)
+
+    def test_add_vtep(self):
+        cmds = ['interface Vxlan1', 'vxlan flood vtep add 1.1.1.1']
+        func = function('add_vtep', 'Vxlan1', '1.1.1.1')
+        self.eapi_positive_config_test(func, cmds)
+
+    def test_add_vtep_to_vlan(self):
+        cmds = ['interface Vxlan1', 'vxlan vlan 10 flood vtep add 1.1.1.1']
+        func = function('add_vtep', 'Vxlan1', '1.1.1.1', vlan='10')
+        self.eapi_positive_config_test(func, cmds)
+
+    def test_remove_vtep(self):
+        cmds = ['interface Vxlan1', 'vxlan flood vtep remove 1.1.1.1']
+        func = function('remove_vtep', 'Vxlan1', '1.1.1.1')
+        self.eapi_positive_config_test(func, cmds)
+
+    def test_remove_vtep_from_vlan(self):
+        cmds = ['interface Vxlan1', 'vxlan vlan 10 flood vtep remove 1.1.1.1']
+        func = function('remove_vtep', 'Vxlan1', '1.1.1.1', vlan='10')
         self.eapi_positive_config_test(func, cmds)
 
 if __name__ == '__main__':

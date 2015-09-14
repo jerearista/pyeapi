@@ -52,6 +52,7 @@ Parameters:
 import re
 
 from pyeapi.api import EntityCollection
+from pyeapi.utils import make_iterable
 
 NAME_RE = re.compile(r'(?:name\s)(?P<value>.*)$', re.M)
 STATE_RE = re.compile(r'(?:state\s)(?P<value>.*)$', re.M)
@@ -86,17 +87,7 @@ class Vlans(EntityCollection):
     """
 
     def get(self, value):
-        """Returns the VLAN configuration as key/value pairs
-
-        Response Message
-
-        .. code-block:: json
-
-            {
-                "name": <string>,
-                "state": [active, suspend],
-                "trunk_groups": [array]
-            }
+        """Returns the VLAN configuration as a resource dict.
 
         Args:
             vid (string): The vlan identifier to retrieve from the
@@ -113,23 +104,62 @@ class Vlans(EntityCollection):
             return None
 
         response = dict(vlan_id=value)
-        response['name'] = NAME_RE.search(config).group('value')
-        response['state'] = STATE_RE.search(config).group('value')
-        response['trunk_groups'] = TRUNK_GROUP_RE.findall(config)
+        response.update(self._parse_name(config))
+        response.update(self._parse_state(config))
+        response.update(self._parse_trunk_groups(config))
 
         return response
 
+    def _parse_name(self, config):
+        """ _parse_name scans the provided configuration block and extracts
+        the vlan name.  The config block is expected to always return the
+        vlan name.  The return dict is intended to be merged into the response
+        dict.
+
+        Args:
+            config (str): The vlan configuration block from the nodes running
+                configuration
+
+        Returns:
+            dict: resource dict attribute
+        """
+        value = NAME_RE.search(config).group('value')
+        return dict(name=value)
+
+    def _parse_state(self, config):
+        """ _parse_state scans the provided configuration block and extracts
+        the vlan state value.  The config block is expected to always return
+        the vlan state config.  The return dict is inteded to be merged into
+        the response dict.
+
+        Args:
+            config (str): The vlan configuration block from the nodes
+                running configuration
+
+        Returns:
+            dict: resource dict attribute
+        """
+        value = STATE_RE.search(config).group('value')
+        return dict(state=value)
+
+    def _parse_trunk_groups(self, config):
+        """ _parse_trunk_groups scans the provided configuration block and
+        extracts all the vlan trunk groups.  If no trunk groups are configured
+        an empty List is returned as the vlaue.  The return dict is intended
+        to be merged into the response dict.
+
+        Args:
+            config (str): The vlan configuration block form the node's
+                running configuration
+
+        Returns:
+            dict: resource dict attribute
+        """
+        values = TRUNK_GROUP_RE.findall(config)
+        return dict(trunk_groups=values)
+
     def getall(self):
         """Returns a dict object of all Vlans in the running-config
-
-        Response Message
-
-        .. code-block:: json
-
-            {
-                "1": {...},
-                "2": {...}
-            }
 
         Returns:
             A dict object of Vlan attributes
@@ -145,10 +175,6 @@ class Vlans(EntityCollection):
     def create(self, vid):
         """ Creates a new VLAN resource
 
-        .. code-block:: none
-
-            vlan <vlanid>
-
         Args:
             vid (str): The VLAN ID to create
 
@@ -160,10 +186,6 @@ class Vlans(EntityCollection):
 
     def delete(self, vid):
         """ Deletes a VLAN from the running configuration
-
-        .. code-block:: none
-
-            no vlan <vlanid>
 
         Args:
             vid (str): The VLAN ID to delete
@@ -190,13 +212,26 @@ class Vlans(EntityCollection):
         command = 'default vlan %s' % vid
         return self.configure(command) if isvlan(vid) else False
 
+    def configure_vlan(self, vid, commands):
+        """ Configures the specified Vlan using commands
+
+        Args:
+            vid (str): The VLAN ID to configure
+            commands: The list of commands to configure
+
+        Returns:
+            True if the commands completed successfully
+        """
+        commands = make_iterable(commands)
+        commands.insert(0, 'vlan %s' % vid)
+        return self.configure(commands)
+
+
     def set_name(self, vid, name=None, default=False):
         """ Configures the VLAN name
 
-        .. code-block:: none
-
-            vlan <vlanid>
-            [no] [default] name <name>
+        EosVersion:
+            4.13.7M
 
         Args:
             vid (str): The VLAN ID to Configures
@@ -206,22 +241,14 @@ class Vlans(EntityCollection):
         Returns:
             True if the operation was successful otherwise False
         """
-        commands = ['vlan %s' % vid]
-        if default:
-            commands.append('default name')
-        elif name is not None:
-            commands.append('name %s' % name)
-        else:
-            commands.append('no name')
-        return self.configure(commands)
+        cmds = self.command_builder('name', value=name, default=default)
+        return self.configure_vlan(vid, cmds)
 
     def set_state(self, vid, value=None, default=False):
         """ Configures the VLAN state
 
-        .. code-block:: none
-
-            vlan <vlanid>
-            [no] [default] state [suspect, active]
+        EosVersion:
+            4.13.7M
 
         Args:
             vid (str): The VLAN ID to configure
@@ -231,22 +258,55 @@ class Vlans(EntityCollection):
         Returns:
             True if the operation was successful otherwise False
         """
-        commands = ['vlan %s' % vid]
+        cmds = self.command_builder('state', value=value, default=default)
+        return self.configure_vlan(vid, cmds)
+
+    def set_trunk_groups(self, vid, value=None, default=False):
+        """ Configures the list of trunk groups support on a vlan
+
+        This method handles configuring the vlan trunk group value to default
+        if the default flag is set to True.  If the default flag is set
+        to False, then this method will calculate the set of trunk
+        group names to be added and to be removed.
+
+        EosVersion:
+            4.13.7M
+
+        Args:
+            vid (str): The VLAN ID to configure
+            value (str): The list of trunk groups that should be configured
+                for this vlan id.
+            default (bool): Configures the trunk group value to default if
+                this value is true
+
+        Returns:
+            True if the operation was successful otherwise False
+
+        """
         if default:
-            commands.append('default state')
-        elif value is not None:
-            commands.append('state %s' % value)
-        else:
-            commands.append('no state')
-        return self.configure(commands)
+            return self.configure_vlan(vid, 'default trunk group')
+
+        current_value = self.get(vid)['trunk_groups']
+        failure = False
+
+        value = make_iterable(value)
+
+        for name in set(value).difference(current_value):
+            if not self.add_trunk_group(vid, name):
+                failure = True
+
+        for name in set(current_value).difference(value):
+            if not self.remove_trunk_group(vid, name):
+                failure = True
+
+        return not failure
+
 
     def add_trunk_group(self, vid, name):
         """ Adds a new trunk group to the Vlan in the running-config
 
-        .. code-block:: none
-
-            vlan <vlanid>
-            trunk-group <name>
+        EosVersion:
+            4.13.7M
 
         Args:
             vid (str): The VLAN ID to configure
@@ -255,17 +315,14 @@ class Vlans(EntityCollection):
         Returns:
             True if the operation was successful otherwise False
         """
-        commands = ["vlan %s" % vid, "trunk group %s" % name]
-        return self.configure(commands)
+        return self.configure_vlan(vid, 'trunk group %s' % name)
 
     def remove_trunk_group(self, vid, name):
         """ Removes a trunk group from the list of configured trunk groups
         for the specified VLAN ID
 
-        .. code-block:: none
-
-            vlan <vlanid>
-            no trunk-group <name>
+        EosVersion:
+            4.13.7M
 
         Args:
             vid (str): The VLAN ID to configure
@@ -274,8 +331,7 @@ class Vlans(EntityCollection):
         Returns:
             True if the operation was successful otherwise False
         """
-        commands = ["vlan %s" % vid, "no trunk group %s" % name]
-        return self.configure(commands)
+        return self.configure_vlan(vid, 'no trunk group %s' % name)
 
 def instance(node):
     """Returns an instance of Vlans

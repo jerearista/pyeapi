@@ -7,9 +7,11 @@
 #	make sdist -- build python source distribution
 #	make pep8 -- pep8 checks
 #	make pyflakes -- pyflakes checks
+#	make flake8 -- flake8 checks
+#	make check -- manifest checks
 #	make tests -- run all of the tests
-#   make unittest -- runs the unit tests
-#   make systest -- runs the system tests
+#	make unittest -- runs the unit tests
+#	make systest -- runs the system tests
 #	make clean -- clean distutils
 #
 ########################################################
@@ -18,19 +20,27 @@
 NAME = "pyeapi"
 
 PYTHON=python
+COVERAGE=coverage
 SITELIB = $(shell $(PYTHON) -c "from distutils.sysconfig import get_python_lib; print get_python_lib()")
 
 VERSION := $(shell cat VERSION)
 
 ########################################################
 
-all: clean pep8 pyflakes tests
+all: clean check pep8 pyflakes tests 
 
 pep8:
 	-pep8 -r --ignore=E501,E221,W291,W391,E302,E251,E203,W293,E231,E303,E201,E225,E261,E241 pyeapi/ test/
 
 pyflakes:
 	pyflakes pyeapi/ test/
+
+flake8:
+	flake8 --ignore=E302,E303,W391 --exit-zero pyeapi/
+	flake8 --ignore=E302,E303,W391,N802 --max-line-length=100 test/
+
+check:
+	check-manifest
 
 clean:
 	@echo "Cleaning up distutils stuff"
@@ -47,8 +57,8 @@ sdist: clean
 tests: unittest systest
 
 unittest: clean
-	$(PYTHON) -m unittest discover test/unit -v
+	$(COVERAGE) run -m unittest discover test/unit -v
 
 systest: clean
-	$(PYTHON) -m unittest discover test/system -v
+	$(COVERAGE) run -m unittest discover test/system -v
 
